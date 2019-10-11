@@ -610,55 +610,6 @@ static void fuse_hardsigmoid(onnx::GraphProto* mutable_graph, std::map<std::stri
     }
 }
 
-static void fuse_batchnorm1d_squeeze_unsqueeze(onnx::GraphProto* mutable_graph, std::map<std::string, onnx::TensorProto>& weights, std::map<std::string, onnx::TensorProto>& binaryop_weights, std::map<std::string, int>& node_reference, std::set<std::string>& blob_names, int& reduced_node_count, std::vector<std::string>& reduced_binaryop_weights)
-{
-    int node_count = mutable_graph->node_size();
-    for (int i=0; i<node_count; i++)
-    {
-        onnx::NodeProto* node = mutable_graph->mutable_node(i);
-
-        // BatchNormalization <= Unsqueeze - BatchNormalization - Squeeze
-        if (node->op_type() == "Unsqueeze")
-        {
-            if (node_reference.find(node->output(0)) == node_reference.end() || node_reference[node->output(0)] != 1)
-                continue;
-
-            if (i+2 >= node_count)
-                continue;
-
-            onnx::NodeProto* node2 = mutable_graph->mutable_node(i+1);
-            onnx::NodeProto* node3 = mutable_graph->mutable_node(i+2);
-
-            if (node2->op_type() != "BatchNormalization" || node3->op_type() != "Squeeze")
-                continue;
-
-            if (node_reference.find(node2->output(0)) == node_reference.end() || node_reference[node2->output(0)] != 1)
-                continue;
-
-            if (node_reference.find(node3->output(0)) == node_reference.end() || node_reference[node3->output(0)] != 1)
-                continue;
-
-            if (node2->input(0) != node->output(0) || node3->input(0) != node2->output(0))
-                continue;
-
-            // reduce
-            node->set_op_type("noop_reducedncnn");
-            node3->set_op_type("noop_reducedncnn");
-
-            node_reference.erase(node_reference.find(node->output(0)));
-            node_reference.erase(node_reference.find(node2->output(0)));
-            blob_names.erase(node->output(0));
-            blob_names.erase(node2->output(0));
-
-            node2->set_input(0, node->input(0));
-            node2->set_output(0, node3->output(0));
-
-            reduced_node_count += 2;
-            i += 2;
-        }
-    }
-}
-
 int main(int argc, char** argv)
 {
     const char* onnxpb = argv[1];
@@ -851,7 +802,6 @@ int main(int argc, char** argv)
     fuse_shufflechannel (mutable_graph, weights, binaryop_weights, node_reference, blob_names, reduced_node_count, reduced_binaryop_weights);
     fuse_hardsigmoid    (mutable_graph, weights, binaryop_weights, node_reference, blob_names, reduced_node_count, reduced_binaryop_weights);
     fuse_hardswish      (mutable_graph, weights, binaryop_weights, node_reference, blob_names, reduced_node_count, reduced_binaryop_weights);
-    fuse_batchnorm1d_squeeze_unsqueeze(mutable_graph, weights, binaryop_weights, node_reference, blob_names, reduced_node_count, reduced_binaryop_weights);
 
     // remove node_reference entry with reference equals to one
     int splitncnn_blob_count = 0;
@@ -1396,8 +1346,8 @@ int main(int argc, char** argv)
         {
             float min = get_node_attr_f(node, "min", -FLT_MAX);
             float max = get_node_attr_f(node, "max", FLT_MAX);
-            fprintf(pp, " 0=%e", min);
-            fprintf(pp, " 1=%e", max);
+            fprintf(pp, " 0=%f", min);
+            fprintf(pp, " 1=%f", max);
         }
         else if (op == "Concat")
         {
@@ -1656,7 +1606,7 @@ int main(int argc, char** argv)
         else if (op == "Elu")
         {
             float alpha = get_node_attr_f(node, "alpha", 1.f);
-            fprintf(pp, " 0=%e", alpha);
+            fprintf(pp, " 0=%f", alpha);
         }
         else if (op == "Exp")
         {
@@ -1724,16 +1674,16 @@ int main(int argc, char** argv)
             float alpha = get_node_attr_f(node, "alpha", 0.2f);
             float beta = get_node_attr_f(node, "beta", 0.5f);
 
-            fprintf(pp, " 0=%e", alpha);
-            fprintf(pp, " 1=%e", beta);
+            fprintf(pp, " 0=%f", alpha);
+            fprintf(pp, " 1=%f", beta);
         }
         else if (op == "HardSwish")
         {
             float alpha = get_node_attr_f(node, "alpha", 0.2f);
             float beta = get_node_attr_f(node, "beta", 0.5f);
 
-            fprintf(pp, " 0=%e", alpha);
-            fprintf(pp, " 1=%e", beta);
+            fprintf(pp, " 0=%f", alpha);
+            fprintf(pp, " 1=%f", beta);
         }
         else if (op == "ImageScaler")
         {
@@ -1759,7 +1709,7 @@ int main(int argc, char** argv)
             int channels = get_tensor_proto_data_size(scale);
 
             fprintf(pp, " 0=%d", channels);
-            fprintf(pp, " 1=%e", eps);
+            fprintf(pp, " 1=%f", eps);
             fwrite_tensor_proto_data(scale, bp);
             fwrite_tensor_proto_data(B, bp);
         }
@@ -1767,7 +1717,7 @@ int main(int argc, char** argv)
         {
             float alpha = get_node_attr_f(node, "alpha", 0.01f);
 
-            fprintf(pp, " 0=%e", alpha);
+            fprintf(pp, " 0=%f", alpha);
         }
         else if (op == "Log")
         {
@@ -1785,9 +1735,9 @@ int main(int argc, char** argv)
 
             fprintf(pp, " 0=%d", norm_region);
             fprintf(pp, " 1=%d", size);
-            fprintf(pp, " 2=%e", alpha);
-            fprintf(pp, " 3=%e", beta);
-            fprintf(pp, " 4=%e", bias);
+            fprintf(pp, " 2=%f", alpha);
+            fprintf(pp, " 3=%f", beta);
+            fprintf(pp, " 4=%f", bias);
         }
         else if (op == "MatMul")
         {
@@ -1893,7 +1843,7 @@ int main(int argc, char** argv)
             fprintf(pp, " 2=%d", left);
             fprintf(pp, " 3=%d", right);
             fprintf(pp, " 4=%d", type);
-            fprintf(pp, " 5=%e", value);
+            fprintf(pp, " 5=%f", value);
         }
         else if (op == "Pow")
         {
@@ -1960,9 +1910,32 @@ int main(int argc, char** argv)
         }
         else if (op == "Slice")
         {
+            std::vector<int> axes = get_node_attr_ai(node, "axes");
             std::vector<int> starts = get_node_attr_ai(node, "starts");
             std::vector<int> ends = get_node_attr_ai(node, "ends");
             std::vector<int> steps = get_node_attr_ai(node, "steps");// TODO
+
+            if(axes.empty())  // In case axes is not provided, we create it
+            {
+                switch(starts.size())
+                {
+                    case 1:
+                    case 2:
+                        axes.push_back(3); // w
+                        break;
+                    case 3:
+                        axes.push_back(2); // h
+                        axes.push_back(3); // w
+                        break;
+                    case 4:
+                        axes.push_back(1); // c
+                        axes.push_back(2); // h
+                        axes.push_back(3); // w
+                        break;
+                    default:
+                        break;
+                }
+            }
 
             // assert step == 1
             for (int i=0; i<(int)steps.size(); i++)
@@ -1971,51 +1944,29 @@ int main(int argc, char** argv)
                     fprintf(stderr, "Unsupported slice step !\n");
             }
 
-            int woffset = 0;
-            int hoffset = 0;
-            int coffset = 0;
-            int outw = -233;
-            int outh = -233;
-            int outc = -233;
+            int offsets[3];
+            int outs[3];
 
-            if (starts.size() == 1) 
+            for(int i=0; i<3; ++i)
             {
-                woffset = starts[0];
-                hoffset = -233;
-                coffset = -233;
-                outw = ends[0] == -1 ? -233: ends[0] - starts[0]; // for onnx from pytorch, -233 works
-            } 
-            else if (starts.size() == 2)
-            {
-                woffset = starts[1];
-                hoffset = -233;
-                coffset = -233;
-                outw = ends[1] == -1 ? -233 : ends[1] - starts[1];
-            }
-            else if (starts.size() == 3)
-            {
-                woffset = starts[2];
-                hoffset = starts[1];
-                coffset = -233;
-                outw = ends[2] == -1 ? -233 : ends[2] - starts[2];
-                outh = ends[1] == -1 ? -233 : ends[1] - starts[1];
-            }
-            else if (starts.size() == 4)
-            {
-                woffset = starts[3];
-                hoffset = starts[2];
-                coffset = starts[1];
-                outw = ends[3] == -1 ? -233 : ends[3] - starts[3];
-                outh = ends[2] == -1 ? -233 : ends[2] - starts[2];
-                outc = ends[1] == -1 ? -233 : ends[1] - starts[1];
+                offsets[i] = 0;
+                outs[i] = -233;
             }
 
-            fprintf(pp, " 0=%d", woffset);
-            fprintf(pp, " 1=%d", hoffset);
-            fprintf(pp, " 2=%d", coffset);
-            fprintf(pp, " 3=%d", outw);
-            fprintf(pp, " 4=%d", outh);
-            fprintf(pp, " 5=%d", outc);
+            for(int i=0; i<(int)axes.size(); i++)
+            {
+                int index = axes[i] - 1;
+                if(index < 0 || index > 2) continue;
+                offsets[index] = starts[i];
+                outs[index] = ends[i] == -1 ? -233: ends[i] - starts[i];
+            }
+
+            fprintf(pp, " 0=%d", offsets[2]);
+            fprintf(pp, " 1=%d", offsets[1]);
+            fprintf(pp, " 2=%d", offsets[0]);
+            fprintf(pp, " 3=%d", outs[2]);
+            fprintf(pp, " 4=%d", outs[1]);
+            fprintf(pp, " 5=%d", outs[0]);
         }
         else if (op == "Softmax")
         {
@@ -2148,8 +2099,8 @@ int main(int argc, char** argv)
             }
 
             fprintf(pp, " 0=%d", resize_type);
-            fprintf(pp, " 1=%e", h_scale);
-            fprintf(pp, " 2=%e", w_scale);
+            fprintf(pp, " 1=%f", h_scale);
+            fprintf(pp, " 2=%f", w_scale);
         }
         else
         {
@@ -2159,7 +2110,7 @@ int main(int argc, char** argv)
                 const onnx::AttributeProto& attr = node.attribute(j);
                 if (attr.type() == 1)
                 {
-                    fprintf(stderr, "  # %s=%g\n", attr.name().c_str(), attr.f());
+                    fprintf(stderr, "  # %s=%f\n", attr.name().c_str(), attr.f());
                 }
                 else if (attr.type() == 2)
                 {
